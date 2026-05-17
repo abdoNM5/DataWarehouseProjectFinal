@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "Plans",
+			"path": "../../../DataWarehouseProj/Plans"
+		},
+		{
+			"name": "DataWarehouseProj",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "02_data_lake",
+			"path": "../../../02_data_lake/02_data_lake"
+		},
+		{
+			"name": "DataWarehouseProj",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

@@ -1,0 +1,554 @@
+# 🧠 Your Part — Detailed Step-by-Step Plan
+
+## Scope Recap
+
+| You (Bouzi) | Your Partner |
+|---|---|
+| NLP & Recommendation Engine | ETL Pipeline (extract → transform → load) |
+| FastAPI Backend | Power BI Dashboard |
+| Web Frontend (Next.js) | Airflow DAG for ETL |
+
+---
+
+## Model Choice: Why `paraphrase-multilingual-MiniLM-L12-v2`
+
+> [!IMPORTANT]
+> **This is the sweet spot for your level and resume.**
+
+| Criteria | Why this model works |
+|---|---|
+| **Resume value** | It's a **Sentence-Transformer** from Hugging Face — recruiters and PFA supervisors recognise this immediately as real NLP/DL work |
+| **Not too advanced** | You're using a **pre-trained model** (no fine-tuning needed). You call `model.encode(text)` and get vectors. That's it |
+| **Multilingual** | Handles **French + English** job descriptions out of the box — perfect since your data has both |
+| **Lightweight** | 12 layers, 118M params, produces **384-d vectors** — runs fine on CPU, no GPU needed |
+| **Industry-relevant** | Sentence-Transformers + cosine similarity is a real technique used in production recommendation systems |
+| **Explainable** | You can clearly explain it in your report: *"We encode job descriptions into dense vectors and rank by cosine similarity"* |
+
+**What you'll be able to say in interviews:**
+> *"I built a semantic job recommendation engine using Sentence-Transformers (paraphrase-multilingual-MiniLM-L12-v2) to encode job descriptions into 384-dimensional embeddings, then ranked them using cosine similarity combined with keyword-based skill matching."*
+
+---
+
+## Step-by-Step Implementation
+
+### Phase A — Skills Extraction Module (Days 1-3)
+
+This is the **easiest NLP part** — pure regex + dictionary matching, no deep learning yet.
+
+---
+
+#### Step A.1 — Create the skills taxonomy file
+
+**File:** `nlp/skills_taxonomy.py`
+
+**What to do:**
+- The skills are already seeded in your `dim_skill` table (see `db/init.sql` lines 110-157)
+- Create a Python dictionary that mirrors that table, grouped by category
+- Add **common aliases** (e.g., `"PySpark"` → `"Spark"`, `"Postgres"` → `"PostgreSQL"`)
+
+```python
+SKILL_ALIASES = {
+    "postgres": "PostgreSQL",
+    "pyspark": "Spark",
+    "tf": "TensorFlow",
+    "k8s": "Kubernetes",
+    "sklearn": "scikit-learn",
+    # ... ~50 aliases
+}
+```
+
+**Deliverable:** A clean Python module with `SKILLS_BY_CATEGORY` dict + `SKILL_ALIASES` dict.
+
+---
+
+#### Step A.2 — Build the skills extractor
+
+**File:** `nlp/skills_extractor.py`
+
+**What to do:**
+1. Take a job description text (cleaned, from `description_clean` column)
+2. Lowercase the text
+3. For each skill in your taxonomy, check if it appears in the text (case-insensitive)
+4. Handle aliases (check aliases too, map them back to canonical skill name)
+5. Return a list of `(skill_name, confidence_score)` tuples
+
+```python
+def extract_skills(description: str) -> list[tuple[str, float]]:
+    """Extract skills from a job description using keyword matching."""
+    # 1. Normalise text
+    # 2. Check each skill / alias against text
+    # 3. Return matches with confidence=1.0 for exact match
+```
+
+**Why confidence_score?** Your `bridge_offer_skill` table has a `confidence_score` column. For keyword matching, set it to `1.0`. Later you could add fuzzy matching with lower scores.
+
+---
+
+#### Step A.3 — Populate `bridge_offer_skill` table
+
+**File:** `nlp/populate_skills.py`
+
+**What to do:**
+1. Query all `fact_job_offer` rows that don't yet have skills in the bridge table
+2. Run `extract_skills()` on each `description_clean`
+3. Look up the `skill_id` from `dim_skill`
+4. Insert into `bridge_offer_skill`
+
+**Test:** Run on 10 offers manually, check results in pgAdmin. Verify skills look correct.
+
+---
+
+### Phase B — Sentence Embeddings (Days 4-6)
+
+This is where the **deep learning** part comes in — but it's simple because you're using a pre-trained model.
+
+---
+
+#### Step B.1 — Install dependencies
+
+```bash
+pip install sentence-transformers==3.0.1 torch scikit-learn
+```
+
+> [!NOTE]
+> `sentence-transformers` will install PyTorch automatically. On CPU this is ~2GB. No GPU needed.
+
+---
+
+#### Step B.2 — Build the embedding module
+
+**File:** `nlp/embeddings.py`
+
+**What to do:**
+```python
+from sentence_transformers import SentenceTransformer
+import numpy as np
+
+# Load model once (takes ~5 seconds on first run, downloads ~500MB)
+model = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
+
+def encode_text(text: str) -> np.ndarray:
+    """Encode a single text into a 384-d vector."""
+    return model.encode(text, normalize_embeddings=True)
+
+def encode_batch(texts: list[str]) -> np.ndarray:
+    """Encode a batch of texts. Returns (N, 384) array."""
+    return model.encode(texts, normalize_embeddings=True, batch_size=32, show_progress_bar=True)
+```
+
+**Key concept to understand for your report:**
+- The model takes a sentence/paragraph → outputs a 384-dimensional floating point vector
+- Similar texts → vectors point in the same direction → high cosine similarity
+- `normalize_embeddings=True` means cosine similarity = simple dot product (faster)
+
+---
+
+#### Step B.3 — Add embedding column to database
+
+**File:** `db/migrations/add_embeddings.sql`
+
+You have two options:
+
+**Option 1 — Simple (recommended):** Store embeddings as a JSON array in a new column:
+```sql
+ALTER TABLE fact_job_offer ADD COLUMN IF NOT EXISTS embedding JSONB;
+```
+
+**Option 2 — Advanced (bonus for resume):** Use `pgvector` extension:
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE fact_job_offer ADD COLUMN IF NOT EXISTS embedding vector(384);
+```
+
+> [!TIP]
+> Start with **Option 1** (JSONB). If you have time, switch to pgvector — it looks great on a resume but requires adding the pgvector Docker image.
+
+---
+
+#### Step B.4 — Generate embeddings for all offers
+
+**File:** `nlp/generate_embeddings.py`
+
+**What to do:**
+1. Query all offers where `embedding IS NULL`
+2. Use `encode_batch()` to encode all `description_clean` texts
+3. Store the resulting vectors back into the `embedding` column
+4. Print progress (e.g., "Encoded 500/1200 offers")
+
+**Expected time:** ~1-2 minutes for 1000 offers on CPU.
+
+---
+
+### Phase C — Recommendation Engine (Days 7-9)
+
+This is the **core value** of your part. It combines skills matching + semantic similarity.
+
+---
+
+#### Step C.1 — Build the recommender
+
+**File:** `nlp/recommender.py`
+
+**Algorithm overview:**
+
+```
+Final Score = α × semantic_score + (1-α) × skill_score
+
+Where:
+  - semantic_score = cosine_similarity(candidate_embedding, offer_embedding)
+  - skill_score    = |candidate_skills ∩ offer_skills| / |candidate_skills|
+  - α = 0.6 (tunable weight — semantic counts more)
+```
+
+**What to implement:**
+
+```python
+from sklearn.metrics.pairwise import cosine_similarity
+
+def recommend(
+    candidate_text: str,
+    candidate_skills: list[str],
+    top_k: int = 10,
+    alpha: float = 0.6
+) -> list[dict]:
+    """
+    1. Encode candidate_text → candidate_embedding
+    2. Load all offer embeddings from DB
+    3. Compute cosine similarity (candidate vs. all offers)
+    4. Compute skill overlap score for each offer
+    5. Combine: final = alpha * semantic + (1-alpha) * skill
+    6. Return top-K offers sorted by final score
+    """
+```
+
+**Return format:**
+```python
+[
+    {
+        "offer_id": 42,
+        "title": "Data Engineer",
+        "company": "BNP Paribas",
+        "location": "Paris",
+        "match_score": 0.87,        # final combined score
+        "semantic_score": 0.91,     # how similar the description is
+        "skill_score": 0.82,        # how many skills match
+        "matched_skills": ["Python", "SQL", "Spark"],
+        "missing_skills": ["Kafka", "Kubernetes"]
+    },
+    ...
+]
+```
+
+---
+
+#### Step C.2 — Test with synthetic profiles
+
+Create 5-10 test candidate profiles in a test script:
+
+```python
+# Test profile 1: Junior Data Engineer
+profile_1 = {
+    "text": "I am a computer science student looking for a data engineering internship. I know Python, SQL, and have basic knowledge of Spark.",
+    "skills": ["Python", "SQL", "Spark", "Git"]
+}
+
+# Test profile 2: ML Engineer
+profile_2 = {
+    "text": "Machine learning engineer with experience in PyTorch, NLP, and model deployment.",
+    "skills": ["Python", "PyTorch", "NLP", "Docker", "scikit-learn"]
+}
+```
+
+**Verify:** Are the top-K results relevant? Does a data engineer profile get data engineering jobs? Does an ML profile get ML jobs?
+
+---
+
+#### Step C.3 — Evaluation metrics (bonus for report)
+
+Compute **Precision@K**: Out of the top-K results, how many are truly relevant?
+
+```python
+def precision_at_k(recommended: list, relevant_job_families: list[str], k: int = 10) -> float:
+    """What % of top-K recommendations match expected job families?"""
+    hits = sum(1 for r in recommended[:k] if r["job_family"] in relevant_job_families)
+    return hits / k
+```
+
+---
+
+### Phase D — FastAPI Backend (Days 10-13)
+
+---
+
+#### Step D.1 — Project setup
+
+**File:** `api/main.py`
+
+```bash
+pip install fastapi uvicorn[standard] psycopg2-binary sqlalchemy
+```
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+app = FastAPI(
+    title="Job Intelligent API",
+    description="Semantic job recommendation engine",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # Next.js frontend
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+```
+
+---
+
+#### Step D.2 — Database connection
+
+**File:** `api/database.py`
+
+Use SQLAlchemy to connect to the `warehouse-db` (port 5433):
+```python
+DATABASE_URL = "postgresql://warehouse:warehouse@localhost:5433/jobs_dw"
+```
+
+---
+
+#### Step D.3 — API endpoints
+
+**File:** `api/routers/recommend.py` and `api/routers/offers.py`
+
+| Method | Endpoint | What it does |
+|---|---|---|
+| `GET` | `/api/offers` | List offers with filters (job_family, city, skills, salary_min) |
+| `GET` | `/api/offers/{id}` | Get full offer details |
+| `POST` | `/api/recommend` | Accept candidate profile, return top-K matches |
+| `GET` | `/api/skills` | List all skills (for frontend autocomplete) |
+| `GET` | `/api/stats` | Summary stats (total offers, top skills, top cities) |
+
+**POST /api/recommend — Request body:**
+```json
+{
+    "description": "Looking for a data engineering role with Python and cloud...",
+    "skills": ["Python", "SQL", "AWS", "Spark"],
+    "top_k": 10
+}
+```
+
+**Response:**
+```json
+{
+    "recommendations": [
+        {
+            "offer_id": 42,
+            "title": "Data Engineer",
+            "company": "Capgemini",
+            "city": "Paris",
+            "match_score": 0.87,
+            "matched_skills": ["Python", "SQL", "Spark"],
+            "missing_skills": ["AWS"]
+        }
+    ],
+    "total_offers_searched": 1200,
+    "processing_time_ms": 340
+}
+```
+
+---
+
+#### Step D.4 — Pydantic schemas
+
+**File:** `api/schemas.py`
+
+Define request/response models with Pydantic for automatic validation and Swagger docs:
+```python
+from pydantic import BaseModel
+
+class RecommendRequest(BaseModel):
+    description: str
+    skills: list[str]
+    top_k: int = 10
+
+class OfferResponse(BaseModel):
+    offer_id: int
+    title: str
+    company: str
+    city: str
+    match_score: float
+    matched_skills: list[str]
+    missing_skills: list[str]
+```
+
+---
+
+#### Step D.5 — Test via Swagger
+
+Run: `uvicorn api.main:app --reload --port 8000`
+
+Open: `http://localhost:8000/docs` → test all endpoints interactively.
+
+---
+
+### Phase E — Next.js Frontend (Days 14-17)
+
+---
+
+#### Step E.1 — Scaffold the project
+
+```bash
+npx -y create-next-app@latest ./frontend --ts --tailwind --app --eslint --no-src-dir
+```
+
+---
+
+#### Step E.2 — Pages to build
+
+| Page | Route | Description |
+|---|---|---|
+| **Home** | `/` | Hero section + quick stats + CTA to recommendation |
+| **Recommend** | `/recommend` | The main feature: skill selector + text input → results |
+| **Browse** | `/offers` | Browse/filter all offers (table or cards) |
+| **Offer Detail** | `/offers/[id]` | Full job description + extracted skills |
+
+---
+
+#### Step E.3 — Recommendation page (the star feature)
+
+This is the **most important page** — it showcases your NLP work:
+
+1. **Skill tag input** — Autocomplete from `/api/skills`, click to add/remove tags
+2. **Free-text area** — "Describe your ideal job..." textarea
+3. **Submit button** → calls `POST /api/recommend`
+4. **Results list** — Cards showing:
+   - Job title, company, city
+   - Match score as a **colored progress bar** (green >80%, yellow >60%, red <60%)
+   - Matched skills (green badges) vs. missing skills (grey badges)
+   - Link to full offer detail
+
+---
+
+#### Step E.4 — Dockerise
+
+Add to `docker-compose.yml`:
+```yaml
+  api:
+    build: ./api
+    ports:
+      - "8000:8000"
+    depends_on:
+      - warehouse-db
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+```
+
+---
+
+### Phase F — Integration & Polish (Days 18-19)
+
+---
+
+#### Step F.1 — End-to-end test
+
+1. Start all Docker services
+2. Verify data is in the warehouse (your partner's ETL should have loaded it)
+3. Run `nlp/populate_skills.py` → skills extracted
+4. Run `nlp/generate_embeddings.py` → embeddings stored
+5. Hit `POST /api/recommend` → get results
+6. Open frontend → test the recommendation page
+
+---
+
+#### Step F.2 — Write your part of the documentation
+
+- `docs/nlp_architecture.md` — Explain the model, the matching algorithm, the scoring formula
+- `docs/api_reference.md` — Auto-generate from FastAPI's OpenAPI spec
+- Add a **"Recommendation Engine"** section to the final report
+
+---
+
+## File Summary — What You Create
+
+```
+nlp/                          ← YOUR MODULE
+├── __init__.py
+├── skills_taxonomy.py        ← Step A.1
+├── skills_extractor.py       ← Step A.2
+├── populate_skills.py        ← Step A.3
+├── embeddings.py             ← Step B.2
+├── generate_embeddings.py    ← Step B.4
+├── recommender.py            ← Step C.1
+└── evaluate.py               ← Step C.3
+
+api/                          ← YOUR MODULE
+├── main.py                   ← Step D.1
+├── database.py               ← Step D.2
+├── schemas.py                ← Step D.4
+├── routers/
+│   ├── recommend.py          ← Step D.3
+│   └── offers.py             ← Step D.3
+├── Dockerfile
+└── requirements.txt
+
+frontend/                     ← YOUR MODULE
+├── app/
+│   ├── page.tsx              ← Home
+│   ├── recommend/page.tsx    ← Recommendation page
+│   ├── offers/page.tsx       ← Browse offers
+│   └── offers/[id]/page.tsx  ← Offer detail
+└── Dockerfile
+
+db/migrations/
+└── add_embeddings.sql        ← Step B.3
+```
+
+---
+
+## Dependencies Between You and Your Partner
+
+```mermaid
+flowchart LR
+    Partner["🧑‍💻 Partner: ETL Pipeline"] -->|"Loads clean data into<br>fact_job_offer + dimensions"| DB["🗄️ PostgreSQL<br>warehouse-db"]
+    DB -->|"You read from<br>fact_job_offer"| You["🧑‍💻 You: NLP + API + Frontend"]
+    You -->|"You write to<br>bridge_offer_skill<br>+ embedding column"| DB
+    Partner2["🧑‍💻 Partner: Power BI"] -->|"Reads all tables<br>including your bridge_offer_skill"| DB
+```
+
+> [!IMPORTANT]
+> **You need your partner to load data first** before you can extract skills or generate embeddings. While waiting, develop and test your code using **mock data** or insert 20-30 sample offers manually.
+
+---
+
+## Timeline Summary
+
+| Days | Phase | What you deliver |
+|---|---|---|
+| 1-3 | **A: Skills Extraction** | `skills_taxonomy.py`, `skills_extractor.py`, populated bridge table |
+| 4-6 | **B: Embeddings** | `embeddings.py`, embedding column in DB, all offers encoded |
+| 7-9 | **C: Recommender** | `recommender.py`, tested with 5-10 profiles, precision@K metrics |
+| 10-13 | **D: FastAPI** | REST API with 5 endpoints, Swagger docs, tested |
+| 14-17 | **E: Frontend** | Next.js app with 4 pages, recommendation flow working |
+| 18-19 | **F: Integration** | End-to-end pipeline, documentation, polish |
+
+---
+
+## What This Gets You for PFA Interviews
+
+You'll be able to talk about:
+
+1. ✅ **NLP** — Sentence-Transformers, embeddings, semantic similarity
+2. ✅ **Information Retrieval** — cosine similarity ranking, hybrid scoring
+3. ✅ **Deep Learning (applied)** — using a pre-trained transformer model
+4. ✅ **API Development** — FastAPI, REST, Pydantic validation
+5. ✅ **Full-Stack** — Next.js frontend consuming your own API
+6. ✅ **Data Engineering** — working with a star schema, PostgreSQL, Docker
+7. ✅ **Software Engineering** — modular code, Docker, Git, documentation

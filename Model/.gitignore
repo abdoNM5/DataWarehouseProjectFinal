@@ -1,0 +1,64 @@
+# ── Secrets & Environment ────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ── Python ───────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+.eggs/
+*.egg
+
+# ── Jupyter Notebooks ────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ── Data Lake (bronze JSONL files — too large for Git)
+data_lake/bronze/
+data_lake/silver/
+data_lake/gold/
+
+# ── Docker & Volumes ────────────────────────────────
+docker-compose.override.yml
+
+# ── Spark / PySpark ──────────────────────────────────
+spark-warehouse/
+metastore_db/
+derby.log
+
+# ── Power BI ─────────────────────────────────────────
+*.pbix.tmp
+*.pbit.tmp
+~$*.pbix
+
+# ── Node / Frontend ──────────────────────────────────
+node_modules/
+
+# ── Logs ─────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDE & Editors ────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ── OS Files ─────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Misc ─────────────────────────────────────────────
+*.tmp
+_pdf_text.txt
+_data_analysis.txt
+_bronze_files.txt

@@ -1,0 +1,124 @@
+version: "3.9"
+
+x-airflow-image: &airflow-image apache/airflow:2.9.2
+x-airflow-env: &airflow-env
+  AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+  AIRFLOW__CORE__EXECUTOR: LocalExecutor
+  AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres:5432/airflow
+  AIRFLOW__CORE__FERNET_KEY: "RM89t2v9HJi7WDWeaOcmkzu4V7ke_772w8XAJ6mlBAA="
+  AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
+  PYTHONPATH: /opt/airflow/project
+  _PIP_ADDITIONAL_REQUIREMENTS: requests==2.32.3 beautifulsoup4==4.12.3
+
+services:
+  # ── Airflow metadata database ──────────────────────────
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  # ── Data Warehouse database (star schema) ──────────────
+  warehouse-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: warehouse
+      POSTGRES_DB: jobs_dw
+    ports:
+      - "5433:5432"
+    volumes:
+      - warehouse-data:/var/lib/postgresql/data
+      - ./db:/docker-entrypoint-initdb.d # auto-runs init.sql on first boot
+
+  # ── Jupyter Lab + PySpark ──────────────────────────────
+  jupyter-spark:
+    image: jupyter/pyspark-notebook:latest
+    ports:
+      - "8888:8888"
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: "jobintelligent" # access token (http://localhost:8888?token=jobintelligent)
+      PYSPARK_SUBMIT_ARGS: "--jars /opt/spark/jars/postgresql-42.7.3.jar pyspark-shell"
+    volumes:
+      - ./notebooks:/home/jovyan/work # notebooks directory
+      - ./data_lake:/home/jovyan/data_lake # bronze data access
+      - ./etl:/home/jovyan/etl # ETL modules
+      - ./db:/home/jovyan/db # SQL scripts
+    depends_on:
+      - warehouse-db
+    command: >
+      bash -c "
+        wget -q -P /opt/spark/jars/ https://jdbc.postgresql.org/download/postgresql-42.7.3.jar 2>/dev/null || true &&
+        start-notebook.sh --NotebookApp.token='jobintelligent'
+      "
+
+  # ── Airflow services ───────────────────────────────────
+  airflow-init:
+    image: *airflow-image
+    entrypoint: /bin/bash
+    command: -c "airflow db init && airflow users create --username admin --password admin --firstname Data --lastname Admin --role Admin --email admin@example.com"
+    environment: *airflow-env
+    depends_on:
+      - postgres
+    volumes:
+      - ./ingestion/orchestration:/opt/airflow/dags
+      - ./:/opt/airflow/project
+      - airflow-logs:/opt/airflow/logs
+
+  airflow-webserver:
+    image: *airflow-image
+    command: webserver
+    ports:
+      - "8080:8080"
+    environment: *airflow-env
+    depends_on:
+      - airflow-init
+    volumes:
+      - ./ingestion/orchestration:/opt/airflow/dags
+      - ./:/opt/airflow/project
+      - airflow-logs:/opt/airflow/logs
+
+  airflow-scheduler:
+    image: *airflow-image
+    command: scheduler
+    environment: *airflow-env
+    depends_on:
+      - airflow-init
+    volumes:
+      - ./ingestion/orchestration:/opt/airflow/dags
+      - ./:/opt/airflow/project
+      - airflow-logs:/opt/airflow/logs
+
+  # ── FastAPI backend ─────────────────────────────────────
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: api/Dockerfile
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     DATABASE_URL: "postgresql://warehouse:warehouse@warehouse-db:5432/jobs_dw"
+  #     FRONTEND_URL: "http://localhost:3000"
+  #   depends_on:
+  #     - warehouse-db
+
+  # # ── Next.js frontend ────────────────────────────────────
+  # frontend:
+  #   build:
+  #     context: .
+  #     dockerfile: frontend/Dockerfile
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: "http://localhost:8000/api"
+  #   depends_on:
+  #     - api
+
+volumes:
+  airflow-logs:
+  pgdata:
+  warehouse-data:

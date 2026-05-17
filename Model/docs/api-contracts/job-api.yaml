@@ -1,0 +1,94 @@
+openapi: 3.0.3
+info:
+  title: Data Talent Job API (Draft)
+  version: 0.1.0
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: Service is healthy
+  /jobs:
+    get:
+      summary: Search curated job postings
+      parameters:
+        - in: query
+          name: q
+          schema:
+            type: string
+          description: Free text search over title and description
+        - in: query
+          name: skills
+          schema:
+            type: array
+            items:
+              type: string
+          style: form
+          explode: false
+        - in: query
+          name: location
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: A list of matching jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobList'
+  /recommendations:
+    get:
+      summary: Personalized job recommendations
+      parameters:
+        - in: query
+          name: candidate_id
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Ranked jobs for the given candidate
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobList'
+components:
+  schemas:
+    Job:
+      type: object
+      properties:
+        job_id:
+          type: string
+        title:
+          type: string
+        company_name:
+          type: string
+        location:
+          type: string
+        match_score:
+          type: number
+        salary_min:
+          type: number
+        salary_max:
+          type: number
+        currency:
+          type: string
+        skills:
+          type: array
+          items:
+            type: string
+    JobList:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
