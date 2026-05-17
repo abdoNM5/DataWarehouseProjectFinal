@@ -8,7 +8,12 @@ x-airflow-env: &airflow-env
   AIRFLOW__CORE__FERNET_KEY: "RM89t2v9HJi7WDWeaOcmkzu4V7ke_772w8XAJ6mlBAA="
   AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "True"
   PYTHONPATH: /opt/airflow/project
-  _PIP_ADDITIONAL_REQUIREMENTS: requests==2.32.3 beautifulsoup4==4.12.3
+  # ── MinIO connection ──
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: minio
+  MINIO_SECRET_KEY: minio123
+  MINIO_BUCKET_BRONZE: bronze
+  _PIP_ADDITIONAL_REQUIREMENTS: requests==2.32.3 beautifulsoup4==4.12.3 minio==7.2.15 pandas==2.2.3 python-dotenv==1.1.0 psycopg2-binary==2.9.9
 
 services:
   # ── Airflow metadata database ──────────────────────────
@@ -67,6 +72,7 @@ services:
     volumes:
       - ./ingestion/orchestration:/opt/airflow/dags
       - ./:/opt/airflow/project
+      - ../DataProcessing:/opt/airflow/project/DataProcessing
       - airflow-logs:/opt/airflow/logs
 
   airflow-webserver:
@@ -80,6 +86,7 @@ services:
     volumes:
       - ./ingestion/orchestration:/opt/airflow/dags
       - ./:/opt/airflow/project
+      - ../DataProcessing:/opt/airflow/project/DataProcessing
       - airflow-logs:/opt/airflow/logs
 
   airflow-scheduler:
@@ -91,7 +98,41 @@ services:
     volumes:
       - ./ingestion/orchestration:/opt/airflow/dags
       - ./:/opt/airflow/project
+      - ../DataProcessing:/opt/airflow/project/DataProcessing
       - airflow-logs:/opt/airflow/logs
+
+  # ── MinIO Object Storage (S3-compatible) ────────────────
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ── MinIO bucket initializer (runs once) ────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 minio minio123 &&
+      mc mb --ignore-existing local/bronze &&
+      mc mb --ignore-existing local/silver &&
+      mc mb --ignore-existing local/gold &&
+      echo '✅ Buckets bronze/silver/gold created successfully.'
+      "
 
   # ── FastAPI backend ─────────────────────────────────────
   # api:
@@ -122,3 +163,4 @@ volumes:
   airflow-logs:
   pgdata:
   warehouse-data:
+  minio-data:

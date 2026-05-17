@@ -1,32 +1,52 @@
+# ══════════════════════════════════════════════════════
+# PROJET JOB INTELLIGENT — .gitignore
+# ══════════════════════════════════════════════════════
+
 # ── Secrets & Environment ────────────────────────────
 .env
 .env.local
 .env.*.local
 !.env.example
 
+# ── Bronze / Silver / Gold Data (large JSON files) ───
+# These go to MinIO, NOT to Git
+**/bronze/
+**/silver/
+**/gold/
+**/data_lake/
+**/02_data_lake/
+
 # ── Python ───────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.egg-info/
+*.egg
 dist/
 build/
+.eggs/
 .venv/
 venv/
-.eggs/
-*.egg
+env/
+*.whl
 
 # ── Jupyter Notebooks ────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb_checkpoints
 
-# ── Data Lake (bronze JSONL files — too large for Git)
-data_lake/bronze/
-data_lake/silver/
-data_lake/gold/
-
 # ── Docker & Volumes ────────────────────────────────
 docker-compose.override.yml
+# Docker volume data (if stored locally)
+minio-data/
+pgdata/
+warehouse-data/
+
+# ── Airflow ──────────────────────────────────────────
+airflow-logs/
+airflow.db
+airflow-webserver.pid
+standalone_admin_password.txt
 
 # ── Spark / PySpark ──────────────────────────────────
 spark-warehouse/
@@ -40,6 +60,11 @@ derby.log
 
 # ── Node / Frontend ──────────────────────────────────
 node_modules/
+.next/
+.nuxt/
+out/
+.cache/
+package-lock.json
 
 # ── Logs ─────────────────────────────────────────────
 *.log
@@ -51,14 +76,18 @@ logs/
 *.swp
 *.swo
 *~
+*.code-workspace
 
 # ── OS Files ─────────────────────────────────────────
 .DS_Store
 Thumbs.db
 Desktop.ini
+ehthumbs.db
 
-# ── Misc ─────────────────────────────────────────────
+# ── Misc / Temp ──────────────────────────────────────
 *.tmp
+*.bak
+*.orig
 _pdf_text.txt
 _data_analysis.txt
 _bronze_files.txt
